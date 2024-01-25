@@ -1,36 +1,28 @@
 #!/usr/bin/env python3
-"""
-Implements an expiring web cache and tracker
-"""
-from typing import Callable
+""" Redis Module """
+
 from functools import wraps
 import redis
 import requests
+from typing import Callable
 
 redis_client = redis.Redis()
 
 
-def url_count(method: Callable) -> Callable:
-    """Counts how many times a URL is accessed."""
+def count_requests(method: Callable) -> Callable:
+    """ Decorator for counting requests """
     @wraps(method)
-    def wrapper(*args, **kwargs):
-        url = args[0]
-        redis_key_count = f"count:{url}"
-        redis_key_data = f"data:{url}"
+    def wrapper(url: str) -> str:
+        """ Wrapper for decorator """
+        redis_client.incr(f"count:{url}")
+        cached_html = redis_client.get(f"cached:{url}")
+        if cached_html:
+            return cached_html.decode('utf-8')
 
-        # Increment access count
-        redis_client.incr(redis_key_count)
-
-        # Check if URL is cached
-        cached_data = redis_client.get(redis_key_data)
-        if cached_data:
-            return cached_data.decode('utf-8')
-
-        # Fetch the page and cache the result with a unique expiration time
         try:
-            response = method(url)
-            redis_client.setex(redis_key_data, 10, response)
-            return response
+            html = method(url)
+            redis_client.setex(f"cached:{url}", 10, html)  # Separate expiration time
+            return html
         except requests.RequestException as e:
             # Handle request exceptions (e.g., network errors)
             print(f"Error fetching {url}: {e}")
@@ -39,13 +31,9 @@ def url_count(method: Callable) -> Callable:
     return wrapper
 
 
-@url_count
+@count_requests
 def get_page(url: str) -> str:
-    """Fetch a page and cache the value."""
-    response = requests.get(url)
-    response.raise_for_status()  # Raise an exception for 4xx or 5xx HTTP status codes
-    return response.text
-
-
-if __name__ == "__main__":
-    get_page('http://slowwly.robertomurray.co.uk')
+    """ Obtain the HTML content of a URL """
+    req = requests.get(url)
+    req.raise_for_status()  # Raise an exception for 4xx or 5xx HTTP status codes
+    return req.text
